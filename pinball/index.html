@@ -3,24 +3,34 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
-<title>ピンボール</title>
+<title>ネオンピンボール</title>
 <style>
+  :root { --bg: #07060f; --panel: #120c24; --cyan: #00f0ff; --pink: #ff2a9d; --yellow: #fcee0a; --text: #e9e6ff; --muted: #9a93c9; }
   * { box-sizing: border-box; }
   html, body { height: 100%; margin: 0; }
   body {
-    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px;
-    padding: 8px; background: #0b1020; color: #e8ecff; overflow: hidden;
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px;
+    padding: 6px; background: var(--bg); color: var(--text); overflow: hidden;
     font-family: system-ui, "Hiragino Sans", "Yu Gothic UI", sans-serif;
     -webkit-user-select: none; user-select: none;
   }
-  #hud { display: flex; justify-content: space-between; width: min(100%, calc((100dvh - 92px) * 4 / 7)); font-variant-numeric: tabular-nums; }
-  #hud b { font-size: 20px; display: block; }
-  #hud small { color: #93a0d0; }
-  canvas {
-    width: min(100%, calc((100dvh - 92px) * 4 / 7)); aspect-ratio: 4 / 7;
-    background: #131a33; border-radius: 12px; touch-action: none;
+  #hud, #dmd, #controls, canvas { width: min(100%, calc((100dvh - 164px) * 4 / 7)); }
+  #hud { display: flex; justify-content: space-between; font-variant-numeric: tabular-nums; }
+  #hud b { font-size: 18px; display: block; color: var(--cyan); }
+  #hud small { color: var(--muted); font-size: 11px; }
+  #dmd {
+    height: 34px; line-height: 32px; padding: 0 10px; overflow: hidden; white-space: nowrap; text-align: center;
+    background: var(--panel); border: 1px solid var(--pink); border-radius: 6px; color: var(--yellow);
+    font: bold 14px/32px ui-monospace, Consolas, "Yu Gothic UI", monospace; text-shadow: 0 0 8px rgba(252, 238, 10, .7);
   }
-  #help { margin: 0; font-size: 12px; color: #93a0d0; text-align: center; }
+  canvas { aspect-ratio: 4 / 7; background: #0a0816; border-radius: 10px; touch-action: none; }
+  #controls { display: flex; align-items: center; gap: 8px; }
+  #help { flex: 1; margin: 0; font-size: 11px; line-height: 1.35; color: var(--muted); }
+  button {
+    min-height: 36px; padding: 0 12px; border-radius: 6px; border: 1px solid var(--cyan);
+    background: var(--panel); color: var(--cyan); font: inherit; font-size: 13px; touch-action: manipulation;
+  }
+  button:active { background: var(--cyan); color: var(--bg); }
 </style>
 </head>
 <body>
@@ -30,44 +40,134 @@
   <div><small>倍率</small><b id="mult">×1</b></div>
   <div><small>ハイスコア</small><b id="best">0</b></div>
 </div>
+<div id="dmd" role="status"></div>
 <canvas id="game" aria-label="ピンボール"></canvas>
-<p id="help">PC: ← → でフリッパー、スペース長押しで発射 ／ スマホ: 画面の左右をタップ、長押しで発射</p>
+<div id="controls">
+  <p id="help">← → フリッパー／スペース長押しで発射／↑ 台を揺らす<br>スマホ: 画面の左右をタップ、長押しで発射</p>
+  <button id="nudge" type="button">揺らす</button>
+  <button id="mute" type="button">音 ON</button>
+</div>
 <script>
 const W = 400, H = 700;
 const STEP = 1 / 240;
 const GRAVITY = 520, MAX_SPEED = 1300;
 const BALL_R = 9, FLIPPER_R = 6, FLIPPER_LEN = 58, FLIPPER_SPEED = 22;
-const LANE_X = 372.5, LANE_Y = 650, LAUNCH_MIN = 350, LAUNCH_MAX = 1100;
+const LANE_X = 372.5, LANE_Y = 650, LAUNCH_MIN = 350, LAUNCH_MAX = 1100, AUTO_LAUNCH = 1000;
+const SAVE_TIME = 10, MULTI_SAVE_TIME = 12, LOCKS_NEEDED = 2, MAX_MULT = 5;
+const CYAN = '#00f0ff', PINK = '#ff2a9d', YELLOW = '#fcee0a', VIOLET = '#7c4dff', DIM = '#2c2650', WHITE = '#f4f2ff';
+
+function arc(cx, cy, r, from, to, parts) {
+  const segments = [];
+  for (let i = 0; i < parts; i++) {
+    const a = from + (to - from) * i / parts, b = from + (to - from) * (i + 1) / parts;
+    segments.push([cx + Math.cos(a) * r, cy + Math.sin(a) * r, cx + Math.cos(b) * r, cy + Math.sin(b) * r]);
+  }
+  return segments;
+}
 
 const walls = [
-  [10, 760, 10, 90], [10, 90, 90, 10], [90, 10, 300, 10], [300, 10, 390, 100],
-  [390, 100, 390, 760], [355, 660, 390, 660], [355, 130, 355, 660],
-  [10, 500, 112, 610], [355, 500, 253, 610],
+  [10, 760, 10, 90], ...arc(90, 90, 80, Math.PI, Math.PI * 1.5, 10), [90, 10, 300, 10],
+  ...arc(300, 100, 90, -Math.PI / 2, 0, 10), [390, 100, 390, 760],
+  [355, 660, 390, 660], [355, 130, 355, 660],
+  [52, 365, 52, 130],                   // inner wall of the loop
+  [10, 400, 40, 432],                   // deflects a failed loop away from the outlane
+  [48, 490, 48, 556], [48, 556, 112, 610],
+  [317, 490, 317, 556], [317, 556, 253, 610],
 ];
-const gate = [355, 130, 390, 100];
+const slings = [
+  { a: [80, 455], b: [80, 545], c: [132, 570], nx: 0.91, ny: -0.41, flash: 0 },
+  { a: [285, 455], b: [285, 545], c: [233, 570], nx: -0.91, ny: -0.41, flash: 0 },
+];
+const shooterGate = [355, 130, 390, 100];
+const loopGate = [12, 100, 52, 130];
+const hole = { x: 92, y: 340, r: 14 };
 const bumpers = [
-  { x: 125, y: 210, r: 24, flash: 0 },
-  { x: 265, y: 210, r: 24, flash: 0 },
-  { x: 195, y: 300, r: 24, flash: 0 },
+  { x: 134, y: 215, r: 24, flash: 0 },
+  { x: 231, y: 215, r: 24, flash: 0 },
+  { x: 182, y: 295, r: 24, flash: 0 },
 ];
 const stars = [
-  { x: 130, y: 110, lit: false },
-  { x: 195, y: 90, lit: false },
-  { x: 260, y: 110, lit: false },
+  { x: 120, y: 110, lit: false },
+  { x: 182, y: 88, lit: false },
+  { x: 245, y: 110, lit: false },
+];
+const drops = [
+  { x: 345, y1: 250, y2: 285, down: false },
+  { x: 345, y1: 292, y2: 327, down: false },
+  { x: 345, y1: 334, y2: 369, down: false },
 ];
 const flippers = [
   { x: 112, y: 610, rest: 0.45, up: -0.5, angle: 0.45, omega: 0, active: false },
   { x: 253, y: 610, rest: Math.PI - 0.45, up: Math.PI + 0.5, angle: Math.PI - 0.45, omega: 0, active: false },
 ];
+const kickers = { left: true, right: true };
+const MISSIONS = [
+  { key: 'bumper', text: 'バンパーを叩け', goal: 15 },
+  { key: 'drop', text: 'ターゲットを倒せ', goal: 6 },
+  { key: 'node', text: 'ノードを点灯', goal: 6 },
+  { key: 'loop', text: '左ループを抜けろ', goal: 1 },
+  { key: 'sling', text: 'スリングを鳴らせ', goal: 12 },
+];
 
-const ball = { x: LANE_X, y: LANE_Y, vx: 0, vy: 0 };
-const game = { state: 'ready', charge: 0, charging: false, inLane: true, score: 0, balls: 3, mult: 1, best: 0 };
+let balls = [];
+const game = {
+  state: 'ready', charge: 0, charging: false, score: 0, balls: 3, mult: 1, best: 0,
+  saveT: 0, saveUsed: false, multi: false, locked: 0, lockLit: false, jackpot: 5000,
+  autoQueue: 0, autoT: 0, dropT: 0, comboT: 0, combo: 0, tilt: 0, tiltLock: 0,
+  mission: 0, round: 0, missionCount: 0, missionsDone: 0, timer: 0, shake: 0,
+  message: '', messageT: 0, stats: { bumper: 0, drop: 0, loop: 0, mission: 0 },
+};
 
 const ui = {
   score: document.getElementById('score'),
   balls: document.getElementById('balls'),
   mult: document.getElementById('mult'),
   best: document.getElementById('best'),
+  dmd: document.getElementById('dmd'),
+  mute: document.getElementById('mute'),
+};
+
+// Sound is synthesized so the game stays a single file.
+const sound = { on: true, ctx: null };
+
+function unlockSound() {
+  if (sound.ctx) { if (sound.ctx.state === 'suspended') sound.ctx.resume(); return; }
+  try { sound.ctx = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) {}
+}
+
+function tone(freq, length, type = 'square', volume = 0.05, endFreq = freq, delay = 0) {
+  if (!sound.on || !sound.ctx || sound.ctx.state !== 'running') return;
+  const start = sound.ctx.currentTime + delay;
+  const osc = sound.ctx.createOscillator(), gain = sound.ctx.createGain();
+  osc.type = type;
+  osc.frequency.setValueAtTime(freq, start);
+  osc.frequency.exponentialRampToValueAtTime(endFreq, start + length);
+  gain.gain.setValueAtTime(volume, start);
+  gain.gain.exponentialRampToValueAtTime(0.0001, start + length);
+  osc.connect(gain).connect(sound.ctx.destination);
+  osc.start(start);
+  osc.stop(start + length);
+}
+
+function melody(notes, gap = 0.08) {
+  notes.forEach((n, i) => tone(n, gap * 1.6, 'square', 0.05, n, i * gap));
+}
+
+const sfx = {
+  flipper: () => tone(180, 0.05, 'square', 0.025, 90),
+  bumper: () => tone(620, 0.1, 'square', 0.05, 240),
+  sling: () => tone(320, 0.08, 'sawtooth', 0.04, 140),
+  node: () => tone(900, 0.12, 'triangle', 0.07, 1400),
+  drop: () => tone(240, 0.14, 'sawtooth', 0.05, 80),
+  launch: () => tone(160, 0.3, 'sawtooth', 0.05, 800),
+  loop: () => melody([660, 880, 1320]),
+  lock: () => melody([330, 440, 330, 660]),
+  mission: () => melody([523, 659, 784, 1047]),
+  jackpot: () => melody([784, 988, 1175, 1568, 1175, 1568], 0.07),
+  multi: () => melody([262, 330, 392, 523, 659, 784, 1047], 0.09),
+  save: () => melody([1047, 784, 1047]),
+  drain: () => tone(300, 0.5, 'sawtooth', 0.05, 50),
+  tilt: () => tone(90, 0.4, 'square', 0.07, 60),
 };
 
 function loadBest() {
@@ -85,32 +185,126 @@ function updateHud() {
   ui.best.textContent = game.best.toLocaleString();
 }
 
-function addScore(points) {
-  game.score += points * game.mult;
+function say(text, seconds = 2) {
+  game.message = text;
+  game.messageT = seconds;
+}
+
+function missionGoal() {
+  return Math.ceil(MISSIONS[game.mission].goal * (1 + game.round * 0.25));
+}
+
+function statusText() {
+  if (game.messageT > 0) return game.message;
+  if (game.state === 'ready') return '長押しで発射 ▶ ' + MISSIONS[game.mission].text;
+  if (game.state === 'over') return 'GAME OVER  ' + game.score.toLocaleString();
+  if (game.multi) return `MULTIBALL  JACKPOT ${game.jackpot.toLocaleString()}`;
+  if (game.lockLit) return `LOCK OPEN 穴を狙え ${game.locked}/${LOCKS_NEEDED}`;
+  return `${MISSIONS[game.mission].text} ${game.missionCount}/${missionGoal()}`;
+}
+
+function addRaw(points) {
+  game.score += points;
   if (game.score > game.best) { game.best = game.score; saveBest(); }
   updateHud();
 }
 
-function resetBall() {
-  Object.assign(ball, { x: LANE_X, y: LANE_Y, vx: 0, vy: 0 });
-  game.inLane = true;
+function addScore(points) {
+  addRaw(points * game.mult);
+}
+
+function progress(key) {
+  if (MISSIONS[game.mission].key !== key) return;
+  game.missionCount += 1;
+  if (game.missionCount >= missionGoal()) completeMission();
+}
+
+function completeMission() {
+  game.missionsDone += 1;
+  game.stats.mission += 1;
+  addScore(5000);
+  kickers.left = kickers.right = true;
+  if (game.missionsDone % 3 === 0) {
+    game.balls += 1;
+    updateHud();
+    say('EXTRA BALL! ボール+1', 3);
+  } else {
+    say('MISSION CLEAR +5,000', 3);
+  }
+  sfx.mission();
+  game.shake = 0.2;
+  game.mission = (game.mission + 1) % MISSIONS.length;
+  if (game.mission === 0) game.round += 1;
+  game.missionCount = 0;
+}
+
+function makeBall(x, y, vx, vy, inLane) {
+  return { x, y, vx, vy, inLane, hold: 0, noHole: 0, armed: false, idle: 0, streak: 0, dead: false, trail: [] };
+}
+
+function serve() {
+  balls = [makeBall(LANE_X, LANE_Y, 0, 0, true)];
   game.charge = 0;
   game.state = 'ready';
 }
 
+function newBall() {
+  game.saveUsed = false;
+  game.saveT = 0;
+  game.multi = false;
+  game.autoQueue = 0;
+  game.tilt = 0;
+  game.tiltLock = 0;
+  game.stats = { bumper: 0, drop: 0, loop: 0, mission: 0 };
+  kickers.left = kickers.right = true;
+  serve();
+}
+
 function newGame() {
-  Object.assign(game, { score: 0, balls: 3, mult: 1 });
+  Object.assign(game, {
+    score: 0, balls: 3, mult: 1, locked: 0, lockLit: false, jackpot: 5000, dropT: 0,
+    mission: 0, round: 0, missionCount: 0, missionsDone: 0, messageT: 0,
+  });
   stars.forEach(s => { s.lit = false; });
-  resetBall();
+  drops.forEach(d => { d.down = false; });
+  newBall();
   updateHud();
 }
 
-function loseBall() {
+function ballBonus() {
+  const s = game.stats;
+  return (s.bumper * 50 + s.drop * 300 + s.loop * 500 + s.mission * 2000) * game.mult;
+}
+
+function allDrained() {
+  if (game.saveT > 0 && !game.saveUsed) {
+    game.saveUsed = true;
+    game.saveT = 0;
+    say('BALL SAVED もう一度！', 2.5);
+    sfx.save();
+    serve();
+    return;
+  }
+  const bonus = ballBonus();
+  addRaw(bonus);
+  game.multi = false;
+  game.state = 'bonus';
+  game.timer = 2;
+  say(`BONUS ${bonus.toLocaleString()}`, 2);
+  sfx.drain();
+}
+
+function finishBonus() {
   game.balls -= 1;
   game.mult = 1;
   updateHud();
-  if (game.balls > 0) resetBall();
-  else game.state = 'over';
+  if (game.balls > 0) {
+    newBall();
+  } else {
+    game.state = 'over';
+    game.timer = 1;
+    balls = [];
+  }
 }
 
 function startCharge() {
@@ -118,33 +312,58 @@ function startCharge() {
 }
 
 function endCharge() {
-  if (game.state === 'over') { newGame(); return; }
+  if (game.state === 'over' && game.timer <= 0) { newGame(); return; }
   if (game.charging && game.state === 'ready') {
-    ball.vy = -(LAUNCH_MIN + (LAUNCH_MAX - LAUNCH_MIN) * game.charge);
+    balls[0].vy = -(LAUNCH_MIN + (LAUNCH_MAX - LAUNCH_MIN) * game.charge);
     game.state = 'play';
+    if (!game.saveUsed) game.saveT = SAVE_TIME;
+    sfx.launch();
   }
   game.charging = false;
   game.charge = 0;
+  syncInputs();
 }
 
-// Pushes the ball out of a capsule; (surfaceVx, surfaceVy) lets flippers hit it.
-function collide(ax, ay, bx, by, radius, restitution, omega, px, py) {
+function nudge() {
+  if (game.state !== 'play' || game.tiltLock > 0) return;
+  for (const b of balls) {
+    if (b.hold > 0 || b.inLane) continue;
+    b.vx += b.x < 182 ? 120 : -120;
+    b.vy -= 80;
+  }
+  game.shake = 0.15;
+  game.tilt += 1;
+  if (game.tilt >= 4) {
+    game.tilt = 0;
+    game.tiltLock = 5;
+    say('TILT! フリッパー停止', 3);
+    sfx.tilt();
+    syncInputs();
+  } else if (game.tilt >= 3) {
+    say('WARNING 揺らしすぎ', 1.5);
+    sfx.tilt();
+  }
+}
+
+// Pushes the ball out of a capsule; omega lets flippers transfer their swing.
+function collide(b, ax, ay, bx, by, radius, restitution, omega = 0, px = 0, py = 0) {
   const dx = bx - ax, dy = by - ay;
-  const t = Math.max(0, Math.min(1, ((ball.x - ax) * dx + (ball.y - ay) * dy) / (dx * dx + dy * dy)));
+  const t = Math.max(0, Math.min(1, ((b.x - ax) * dx + (b.y - ay) * dy) / (dx * dx + dy * dy)));
   const cx = ax + dx * t, cy = ay + dy * t;
-  const ox = ball.x - cx, oy = ball.y - cy;
+  const ox = b.x - cx, oy = b.y - cy;
   const dist = Math.hypot(ox, oy);
-  if (dist === 0 || dist >= radius) return;
+  if (dist === 0 || dist >= radius) return false;
   const nx = ox / dist, ny = oy / dist;
-  ball.x = cx + nx * radius;
-  ball.y = cy + ny * radius;
+  b.x = cx + nx * radius;
+  b.y = cy + ny * radius;
   const surfaceVx = omega ? -omega * (cy - py) : 0;
   const surfaceVy = omega ? omega * (cx - px) : 0;
-  const approach = (ball.vx - surfaceVx) * nx + (ball.vy - surfaceVy) * ny;
+  const approach = (b.vx - surfaceVx) * nx + (b.vy - surfaceVy) * ny;
   if (approach < 0) {
-    ball.vx -= (1 + restitution) * approach * nx;
-    ball.vy -= (1 + restitution) * approach * ny;
+    b.vx -= (1 + restitution) * approach * nx;
+    b.vy -= (1 + restitution) * approach * ny;
   }
+  return approach < -30;
 }
 
 function moveFlipper(f) {
@@ -156,7 +375,16 @@ function moveFlipper(f) {
   f.omega = (f.angle - previous) / STEP;
 }
 
-function hitBumpers() {
+const sparks = [];
+
+function burst(x, y, color, count = 8) {
+  for (let i = 0; i < count && sparks.length < 80; i++) {
+    const a = Math.random() * Math.PI * 2, speed = 40 + Math.random() * 160;
+    sparks.push({ x, y, vx: Math.cos(a) * speed, vy: Math.sin(a) * speed, life: 0.35, color });
+  }
+}
+
+function hitBumpers(ball) {
   for (const b of bumpers) {
     const ox = ball.x - b.x, oy = ball.y - b.y;
     const dist = Math.hypot(ox, oy), reach = b.r + BALL_R;
@@ -167,164 +395,538 @@ function hitBumpers() {
     const approach = ball.vx * nx + ball.vy * ny;
     ball.vx += (260 - Math.min(approach, 0)) * nx;
     ball.vy += (260 - Math.min(approach, 0)) * ny;
+    // Frees a ball trapped bouncing between a bumper and a wall.
+    ball.streak += 1;
+    if (ball.streak >= 10) {
+      ball.streak = 0;
+      ball.vx = ball.x < 182 ? 260 : -260;
+      ball.vy = 240;
+    }
     b.flash = 0.12;
+    game.stats.bumper += 1;
     addScore(100);
+    progress('bumper');
+    burst(ball.x, ball.y, PINK);
+    sfx.bumper();
   }
 }
 
-function hitStars() {
+function hitStars(ball) {
   for (const s of stars) {
     if (!s.lit && Math.hypot(ball.x - s.x, ball.y - s.y) < BALL_R + 10) {
       s.lit = true;
       addScore(250);
+      progress('node');
+      burst(s.x, s.y, YELLOW);
+      sfx.node();
     }
   }
   if (stars.every(s => s.lit)) {
     stars.forEach(s => { s.lit = false; });
-    game.mult = Math.min(game.mult + 1, 5);
+    game.mult = Math.min(game.mult + 1, MAX_MULT);
     addScore(1000);
+    updateHud();
+    say(`NODE COMPLETE 倍率 ×${game.mult}`);
   }
+}
+
+function hitSlings(ball) {
+  for (const s of slings) {
+    collide(ball, s.a[0], s.a[1], s.b[0], s.b[1], BALL_R, 0.45);
+    collide(ball, s.b[0], s.b[1], s.c[0], s.c[1], BALL_R, 0.45);
+    if (collide(ball, s.a[0], s.a[1], s.c[0], s.c[1], BALL_R, 0.45)) {
+      ball.vx += s.nx * 300;
+      ball.vy += s.ny * 300;
+      s.flash = 0.1;
+      addScore(50);
+      progress('sling');
+      burst(ball.x, ball.y, CYAN, 5);
+      sfx.sling();
+    }
+  }
+}
+
+function hitDrops(ball) {
+  for (const d of drops) {
+    if (d.down || !collide(ball, d.x, d.y1, d.x, d.y2, BALL_R + 3, 0.45)) continue;
+    d.down = true;
+    game.stats.drop += 1;
+    addScore(300);
+    progress('drop');
+    burst(d.x, ball.y, CYAN);
+    sfx.drop();
+  }
+  if (game.dropT === 0 && drops.every(d => d.down)) {
+    addScore(2000);
+    game.dropT = 1.5;
+    if (!game.multi && !game.lockLit) {
+      game.lockLit = true;
+      say('FIREWALL DOWN LOCK OPEN');
+    }
+    sfx.lock();
+  }
+}
+
+function jackpot() {
+  addScore(game.jackpot);
+  say(`JACKPOT ${(game.jackpot * game.mult).toLocaleString()}!`, 2.5);
+  game.jackpot += 2500;
+  game.shake = 0.35;
+  sfx.jackpot();
+}
+
+function hitLoop(ball) {
+  if (ball.x < 52 && ball.y < 300 && ball.vy < 0) ball.armed = true;
+  if (ball.armed && ball.vy > 0 && ball.x < 52) ball.armed = false;
+  if (!ball.armed || ball.x < 110 || ball.y > 60) return;
+  ball.armed = false;
+  game.combo = game.comboT > 0 ? game.combo + 1 : 1;
+  game.comboT = 6;
+  game.stats.loop += 1;
+  addScore(1000 * game.combo);
+  progress('loop');
+  if (game.multi) jackpot();
+  else {
+    say(game.combo > 1 ? `COMBO ×${game.combo}!` : 'LOOP +1,000');
+    sfx.loop();
+  }
+}
+
+function hitHole(ball) {
+  if (ball.noHole > 0 || Math.hypot(ball.x - hole.x, ball.y - hole.y) > hole.r) return;
+  burst(hole.x, hole.y, YELLOW, 12);
+  if (game.lockLit && !game.multi) {
+    game.locked += 1;
+    ball.dead = true;
+    sfx.lock();
+    if (game.locked >= LOCKS_NEEDED) startMultiball();
+    else {
+      say(`BALL LOCKED ${game.locked}/${LOCKS_NEEDED}`, 2.5);
+      serve();
+    }
+    return;
+  }
+  ball.hold = 0.8;
+  ball.vx = ball.vy = 0;
+  ball.x = hole.x;
+  ball.y = hole.y;
+  if (game.multi) jackpot();
+  else {
+    addScore(500);
+    sfx.drop();
+  }
+}
+
+function startMultiball() {
+  balls = balls.filter(b => !b.dead);
+  game.multi = true;
+  game.lockLit = false;
+  game.locked = 0;
+  game.saveT = MULTI_SAVE_TIME;
+  game.autoQueue = 1;
+  game.autoT = 0.6;
+  for (let i = 0; i < 2; i++) {
+    const b = makeBall(hole.x, hole.y, 0, 0, false);
+    b.hold = 0.5 + i * 0.5;
+    balls.push(b);
+  }
+  say('MULTIBALL!!', 3);
+  game.shake = 0.4;
+  sfx.multi();
+}
+
+function stepBall(b) {
+  if (b.hold > 0) {
+    b.hold -= STEP;
+    if (b.hold <= 0) {
+      b.vx = 280;
+      b.vy = -240;
+      b.noHole = 0.8;
+    }
+    return;
+  }
+  b.noHole = Math.max(0, b.noHole - STEP);
+
+  b.vy += GRAVITY * STEP;
+  const speed = Math.hypot(b.vx, b.vy);
+  if (speed > MAX_SPEED) {
+    b.vx *= MAX_SPEED / speed;
+    b.vy *= MAX_SPEED / speed;
+  }
+  b.x += b.vx * STEP;
+  b.y += b.vy * STEP;
+  if (b.y > 400) b.streak = 0;
+
+  for (const f of flippers) {
+    const tipX = f.x + Math.cos(f.angle) * FLIPPER_LEN;
+    const tipY = f.y + Math.sin(f.angle) * FLIPPER_LEN;
+    collide(b, f.x, f.y, tipX, tipY, BALL_R + FLIPPER_R, 0.3, f.omega, f.x, f.y);
+  }
+  // Walls run after flippers so a raised flipper cannot squeeze the ball through a slope.
+  for (const w of walls) collide(b, w[0], w[1], w[2], w[3], BALL_R, 0.45);
+  if (b.inLane && b.x < 345) b.inLane = false;
+  if (!b.inLane) collide(b, ...shooterGate, BALL_R, 0.45);
+  if (b.vy > 0) collide(b, ...loopGate, BALL_R, 0.45);
+  hitSlings(b);
+  hitBumpers(b);
+  hitStars(b);
+  hitDrops(b);
+  hitLoop(b);
+  hitHole(b);
+  if (b.dead || b.hold > 0) return;
+
+  if (b.y > 630 && (b.x < 48 || b.x > 317)) {
+    const side = b.x < 48 ? 'left' : 'right';
+    if (kickers[side]) {
+      kickers[side] = false;
+      b.vy = -820;
+      b.vx = side === 'left' ? 0 : -40;
+      say('KICKBACK 復帰！');
+      burst(b.x, b.y, CYAN, 12);
+      sfx.save();
+    }
+  }
+
+  if (b.inLane && b.y >= LANE_Y && b.vy >= 0) {
+    if (balls.length > 1 || game.autoQueue > 0) {
+      b.y = LANE_Y;
+      b.vy = -AUTO_LAUNCH;
+    } else {
+      serve();
+      return;
+    }
+  }
+
+  const stopped = speed < 25 && !flippers[0].active && !flippers[1].active;
+  b.idle = stopped ? b.idle + STEP : 0;
+  if (b.idle > 3) {
+    b.idle = 0;
+    b.vx += Math.random() < 0.5 ? -160 : 160;
+    b.vy -= 240;
+  }
+  if (b.y > H + 30) b.dead = true;
 }
 
 function step() {
   flippers.forEach(moveFlipper);
   bumpers.forEach(b => { b.flash = Math.max(0, b.flash - STEP); });
+  slings.forEach(s => { s.flash = Math.max(0, s.flash - STEP); });
+  game.shake = Math.max(0, game.shake - STEP);
+  game.messageT = Math.max(0, game.messageT - STEP);
+  game.timer = Math.max(0, game.timer - STEP);
   if (game.charging) game.charge = Math.min(1, game.charge + STEP / 1.2);
+  if (game.state === 'bonus' && game.timer === 0) finishBonus();
   if (game.state !== 'play') return;
 
-  ball.vy += GRAVITY * STEP;
-  const speed = Math.hypot(ball.vx, ball.vy);
-  if (speed > MAX_SPEED) {
-    ball.vx *= MAX_SPEED / speed;
-    ball.vy *= MAX_SPEED / speed;
+  game.saveT = Math.max(0, game.saveT - STEP);
+  game.comboT = Math.max(0, game.comboT - STEP);
+  game.tilt = Math.max(0, game.tilt - STEP * 0.4);
+  if (game.tiltLock > 0) {
+    game.tiltLock = Math.max(0, game.tiltLock - STEP);
+    if (game.tiltLock === 0) syncInputs();
   }
-  ball.x += ball.vx * STEP;
-  ball.y += ball.vy * STEP;
-
-  for (const f of flippers) {
-    const tipX = f.x + Math.cos(f.angle) * FLIPPER_LEN;
-    const tipY = f.y + Math.sin(f.angle) * FLIPPER_LEN;
-    collide(f.x, f.y, tipX, tipY, BALL_R + FLIPPER_R, 0.3, f.omega, f.x, f.y);
+  if (game.dropT > 0) {
+    game.dropT = Math.max(0, game.dropT - STEP);
+    if (game.dropT === 0) drops.forEach(d => { d.down = false; });
   }
-  // Walls run after flippers so a raised flipper cannot squeeze the ball through a slope.
-  for (const w of walls) collide(w[0], w[1], w[2], w[3], BALL_R, 0.45, 0, 0, 0);
-  if (game.inLane && ball.x < 345) game.inLane = false;
-  if (!game.inLane) collide(gate[0], gate[1], gate[2], gate[3], BALL_R, 0.45, 0, 0, 0);
-  hitBumpers();
-  hitStars();
+  if (game.autoQueue > 0) {
+    game.autoT -= STEP;
+    if (game.autoT <= 0) {
+      game.autoQueue -= 1;
+      balls.push(makeBall(LANE_X, LANE_Y, 0, -AUTO_LAUNCH, true));
+      sfx.launch();
+    }
+  }
 
-  if (game.inLane && ball.y >= LANE_Y && ball.vy >= 0) resetBall();
-  if (ball.y > H + 30) loseBall();
+  const list = balls;
+  for (let i = 0; i < list.length; i++) stepBall(list[i]);
+  if (game.state !== 'play' || !list.some(b => b.dead)) return;
+
+  const count = balls.length;
+  balls = balls.filter(b => !b.dead);
+  if (game.multi && game.saveT > 0) {
+    game.autoQueue += count - balls.length;
+    game.autoT = Math.max(game.autoT, 0.4);
+    return;
+  }
+  if (game.multi && balls.length + game.autoQueue <= 1) {
+    game.multi = false;
+    if (balls.length + game.autoQueue === 1) say('MULTIBALL END');
+  }
+  if (balls.length === 0 && game.autoQueue === 0) allDrained();
 }
 
 const canvas = document.getElementById('game');
 const ctx = canvas.getContext('2d');
+let table = null;
 
 function resize() {
-  const ratio = window.devicePixelRatio || 1;
+  const ratio = Math.min(window.devicePixelRatio || 1, 2);
   canvas.width = canvas.clientWidth * ratio;
   canvas.height = canvas.clientHeight * ratio;
+  table = document.createElement('canvas');
+  table.width = canvas.width;
+  table.height = canvas.height;
+  const t = table.getContext('2d');
+  t.setTransform(table.width / W, 0, 0, table.height / H, 0, 0);
+  drawTable(t);
 }
 
-function line(x1, y1, x2, y2, color, width) {
-  ctx.strokeStyle = color;
-  ctx.lineWidth = width;
-  ctx.lineCap = 'round';
-  ctx.beginPath();
-  ctx.moveTo(x1, y1);
-  ctx.lineTo(x2, y2);
-  ctx.stroke();
+function line(c, x1, y1, x2, y2, color, width, glow = 0) {
+  c.strokeStyle = color;
+  c.lineWidth = width;
+  c.lineCap = 'round';
+  c.shadowColor = color;
+  c.shadowBlur = glow;
+  c.beginPath();
+  c.moveTo(x1, y1);
+  c.lineTo(x2, y2);
+  c.stroke();
+  c.shadowBlur = 0;
 }
 
-function circle(x, y, r, color) {
-  ctx.fillStyle = color;
-  ctx.beginPath();
-  ctx.arc(x, y, r, 0, Math.PI * 2);
-  ctx.fill();
+function circle(c, x, y, r, color, glow = 0) {
+  c.fillStyle = color;
+  c.shadowColor = color;
+  c.shadowBlur = glow;
+  c.beginPath();
+  c.arc(x, y, r, 0, Math.PI * 2);
+  c.fill();
+  c.shadowBlur = 0;
+}
+
+function triangle(c, s, color, alpha) {
+  c.globalAlpha = alpha;
+  c.fillStyle = color;
+  c.beginPath();
+  c.moveTo(s.a[0], s.a[1]);
+  c.lineTo(s.b[0], s.b[1]);
+  c.lineTo(s.c[0], s.c[1]);
+  c.closePath();
+  c.fill();
+  c.globalAlpha = 1;
+}
+
+// Everything that never moves is drawn once here, which keeps phones smooth.
+function drawTable(c) {
+  const sky = c.createLinearGradient(0, 0, 0, H);
+  sky.addColorStop(0, '#160a2e');
+  sky.addColorStop(0.6, '#0b0a1c');
+  sky.addColorStop(1, '#14061f');
+  c.fillStyle = sky;
+  c.fillRect(0, 0, W, H);
+
+  c.globalAlpha = 0.5;
+  c.fillStyle = '#1a1338';
+  let x = 56;
+  for (const [w, h] of [[34, 70], [26, 110], [40, 55], [24, 130], [36, 85], [30, 120], [38, 60], [28, 95]]) {
+    c.fillRect(x, 470 - h, w, h);
+    x += w + 4;
+  }
+  c.globalAlpha = 0.14;
+  for (let i = 0; i <= H; i += 30) line(c, 0, i, W, i, VIOLET, 1);
+  for (let i = 0; i <= W; i += 30) line(c, i, 0, i, H, VIOLET, 1);
+  c.globalAlpha = 1;
+
+  c.font = 'bold 42px ui-monospace, Consolas, monospace';
+  c.textAlign = 'center';
+  c.globalAlpha = 0.16;
+  c.fillStyle = PINK;
+  c.fillText('ネオン', 182, 420);
+  c.globalAlpha = 1;
+  c.font = '9px ui-monospace, Consolas, monospace';
+  c.fillStyle = VIOLET;
+  c.fillText('LOOP', 31, 250);
+  c.fillText('FIREWALL', 298, 240);
+
+  for (const w of walls) line(c, w[0], w[1], w[2], w[3], VIOLET, 4, 8);
+  line(c, ...loopGate, CYAN, 2, 6);
+  for (const s of slings) {
+    line(c, s.a[0], s.a[1], s.b[0], s.b[1], VIOLET, 4, 6);
+    line(c, s.b[0], s.b[1], s.c[0], s.c[1], VIOLET, 4, 6);
+  }
+  circle(c, hole.x, hole.y, hole.r + 3, DIM);
+  circle(c, hole.x, hole.y, hole.r - 2, '#03020a');
+}
+
+function pulse(speed = 6) {
+  return 0.45 + 0.55 * Math.abs(Math.sin(performance.now() / 1000 * speed));
+}
+
+function missionTargets() {
+  switch (MISSIONS[game.mission].key) {
+    case 'bumper': return bumpers.map(b => [b.x, b.y - 34]);
+    case 'drop': return [[322, 310]];
+    case 'node': return stars.map(s => [s.x, s.y + 20]);
+    case 'loop': return [[66, 390]];
+    default: return [[100, 500], [265, 500]];
+  }
+}
+
+function drawLamps() {
+  const on = pulse();
+  ctx.globalAlpha = on;
+  if (game.state === 'play' || game.state === 'ready') {
+    for (const [x, y] of missionTargets()) circle(ctx, x, y, 4, YELLOW, 8);
+  }
+  ctx.globalAlpha = 1;
+  circle(ctx, 29, 600, 5, kickers.left ? CYAN : DIM, kickers.left ? 8 : 0);
+  circle(ctx, 336, 600, 5, kickers.right ? CYAN : DIM, kickers.right ? 8 : 0);
+  if (game.saveT > 0 && !game.saveUsed || game.state === 'ready' && !game.saveUsed) {
+    ctx.globalAlpha = on;
+    ctx.fillStyle = CYAN;
+    ctx.font = 'bold 12px ui-monospace, Consolas, monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText('SHIELD', 182, 682);
+    ctx.globalAlpha = 1;
+  }
+  if (game.lockLit) {
+    ctx.globalAlpha = on;
+    circle(ctx, hole.x, hole.y, hole.r + 7, PINK, 12);
+    ctx.globalAlpha = 1;
+    circle(ctx, hole.x, hole.y, hole.r - 2, '#03020a');
+  }
+  for (let i = 0; i < LOCKS_NEEDED; i++) {
+    circle(ctx, hole.x - 8 + i * 16, hole.y + 28, 4, i < game.locked ? PINK : DIM);
+  }
 }
 
 function draw() {
+  const shake = game.shake > 0 ? 3 : 0;
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.drawImage(table, (Math.random() - 0.5) * shake * 2, (Math.random() - 0.5) * shake * 2);
   ctx.setTransform(canvas.width / W, 0, 0, canvas.height / H, 0, 0);
-  ctx.clearRect(0, 0, W, H);
 
-  for (const w of walls) line(w[0], w[1], w[2], w[3], '#5b6bb5', 4);
-  if (!game.inLane) line(gate[0], gate[1], gate[2], gate[3], '#5b6bb5', 4);
-  for (const s of stars) circle(s.x, s.y, 8, s.lit ? '#ffd65a' : '#39436f');
+  if (balls.every(b => !b.inLane)) line(ctx, ...shooterGate, VIOLET, 4, 6);
+  drawLamps();
+  for (const s of slings) triangle(ctx, s, s.flash > 0 ? YELLOW : CYAN, s.flash > 0 ? 0.9 : 0.25);
+  for (const d of drops) line(ctx, d.x, d.y1, d.x, d.y2, d.down ? DIM : CYAN, d.down ? 2 : 6, d.down ? 0 : 10);
+  for (const s of stars) circle(ctx, s.x, s.y, 8, s.lit ? YELLOW : DIM, s.lit ? 12 : 0);
   for (const b of bumpers) {
-    circle(b.x, b.y, b.r, b.flash > 0 ? '#ffd65a' : '#ff6b8a');
-    circle(b.x, b.y, b.r * 0.55, '#131a33');
+    circle(ctx, b.x, b.y, b.r, b.flash > 0 ? YELLOW : PINK, 14);
+    circle(ctx, b.x, b.y, b.r * 0.55, '#0a0816');
   }
   for (const f of flippers) {
-    line(f.x, f.y, f.x + Math.cos(f.angle) * FLIPPER_LEN, f.y + Math.sin(f.angle) * FLIPPER_LEN, '#62e0c8', FLIPPER_R * 2);
+    line(ctx, f.x, f.y, f.x + Math.cos(f.angle) * FLIPPER_LEN, f.y + Math.sin(f.angle) * FLIPPER_LEN, game.tiltLock > 0 ? DIM : CYAN, FLIPPER_R * 2, 8);
   }
-  if (game.state === 'ready') line(LANE_X, 690, LANE_X, 672 + game.charge * 16, '#62e0c8', 8);
-  circle(ball.x, ball.y, BALL_R, '#f2f4ff');
+  if (game.state === 'ready') line(ctx, LANE_X, 690, LANE_X, 672 + game.charge * 16, game.charge > 0.8 ? PINK : CYAN, 8, 8);
+
+  for (const s of sparks) {
+    ctx.globalAlpha = s.life / 0.35;
+    ctx.fillStyle = s.color;
+    ctx.fillRect(s.x - 1.5, s.y - 1.5, 3, 3);
+  }
+  ctx.globalAlpha = 1;
+
+  for (const b of balls) {
+    if (b.hold > 0) continue;
+    b.trail.push(b.x, b.y);
+    if (b.trail.length > 12) b.trail.splice(0, 2);
+    for (let i = 0; i < b.trail.length; i += 2) {
+      ctx.globalAlpha = i / 40;
+      circle(ctx, b.trail[i], b.trail[i + 1], BALL_R - 1, CYAN);
+    }
+    ctx.globalAlpha = 1;
+    circle(ctx, b.x, b.y, BALL_R, WHITE, 10);
+  }
 
   ctx.textAlign = 'center';
-  ctx.fillStyle = '#e8ecff';
   if (game.state === 'ready' && !game.charging) {
+    ctx.fillStyle = WHITE;
     ctx.font = '16px system-ui, sans-serif';
-    ctx.fillText('長押しで発射', 182, 420);
+    ctx.fillText('長押しで発射', 182, 400);
   }
   if (game.state === 'over') {
-    ctx.font = 'bold 32px system-ui, sans-serif';
-    ctx.fillText('ゲームオーバー', 182, 390);
-    ctx.font = '16px system-ui, sans-serif';
-    ctx.fillText('タップまたはスペースでもう一度', 182, 422);
+    ctx.fillStyle = 'rgba(7, 6, 15, 0.7)';
+    ctx.fillRect(40, 340, 285, 100);
+    ctx.fillStyle = PINK;
+    ctx.font = 'bold 30px system-ui, sans-serif';
+    ctx.fillText('ゲームオーバー', 182, 385);
+    ctx.fillStyle = WHITE;
+    ctx.font = '15px system-ui, sans-serif';
+    ctx.fillText('タップまたはスペースでもう一度', 182, 418);
   }
+
+  const text = statusText();
+  if (ui.dmd.textContent !== text) ui.dmd.textContent = text;
 }
 
 const pointers = new Map();
-
-function syncPointers() {
-  flippers[0].active = keys.left || [...pointers.values()].includes(0);
-  flippers[1].active = keys.right || [...pointers.values()].includes(1);
-}
-
 const keys = { left: false, right: false };
 const keyMap = { ArrowLeft: 'left', z: 'left', Z: 'left', ArrowRight: 'right', '/': 'right' };
 
+function syncInputs() {
+  // A press that launches the ball should not also swing the flippers.
+  const free = game.state === 'play' && game.tiltLock === 0;
+  const values = [...pointers.values()];
+  const left = free && (keys.left || values.includes(0));
+  const right = free && (keys.right || values.includes(1));
+  if ((left && !flippers[0].active) || (right && !flippers[1].active)) sfx.flipper();
+  flippers[0].active = left;
+  flippers[1].active = right;
+}
+
+function toggleMute() {
+  sound.on = !sound.on;
+  ui.mute.textContent = sound.on ? '音 ON' : '音 OFF';
+}
+
 window.addEventListener('keydown', e => {
-  if (keyMap[e.key]) { keys[keyMap[e.key]] = true; syncPointers(); e.preventDefault(); }
-  if ((e.key === ' ' || e.key === 'ArrowDown') && !e.repeat) { startCharge(); }
-  if (e.key === ' ' || e.key === 'ArrowDown') e.preventDefault();
+  unlockSound();
+  if (keyMap[e.key]) { keys[keyMap[e.key]] = true; syncInputs(); e.preventDefault(); }
+  if ((e.key === ' ' || e.key === 'ArrowDown') && !e.repeat) startCharge();
+  if (e.key === ' ' || e.key === 'ArrowDown' || e.key === 'ArrowUp') e.preventDefault();
+  if ((e.key === 'ArrowUp' || e.key === 'x' || e.key === 'X') && !e.repeat) nudge();
+  if ((e.key === 'm' || e.key === 'M') && !e.repeat) toggleMute();
 });
 
 window.addEventListener('keyup', e => {
-  if (keyMap[e.key]) { keys[keyMap[e.key]] = false; syncPointers(); }
+  if (keyMap[e.key]) { keys[keyMap[e.key]] = false; syncInputs(); }
   if (e.key === ' ' || e.key === 'ArrowDown') endCharge();
 });
 
 canvas.addEventListener('pointerdown', e => {
+  unlockSound();
   const box = canvas.getBoundingClientRect();
   pointers.set(e.pointerId, e.clientX - box.left < box.width / 2 ? 0 : 1);
   canvas.setPointerCapture(e.pointerId);
-  syncPointers();
+  syncInputs();
   startCharge();
 });
 
 function releasePointer(e) {
   if (!pointers.delete(e.pointerId)) return;
-  syncPointers();
+  syncInputs();
   if (pointers.size === 0) endCharge();
 }
 
 canvas.addEventListener('pointerup', releasePointer);
 canvas.addEventListener('pointercancel', releasePointer);
+document.getElementById('nudge').addEventListener('click', () => { unlockSound(); nudge(); });
+ui.mute.addEventListener('click', () => { unlockSound(); toggleMute(); });
 window.addEventListener('resize', resize);
 
 let last = 0, pending = 0;
 
 function frame(time) {
-  pending += Math.min((time - last) / 1000 || 0, 0.05);
+  const elapsed = Math.min((time - last) / 1000 || 0, 0.05);
+  pending += elapsed;
   last = time;
   while (pending >= STEP) { step(); pending -= STEP; }
+  for (let i = sparks.length - 1; i >= 0; i--) {
+    const s = sparks[i];
+    s.life -= elapsed;
+    s.x += s.vx * elapsed;
+    s.y += s.vy * elapsed;
+    if (s.life <= 0) sparks.splice(i, 1);
+  }
   draw();
   requestAnimationFrame(frame);
 }
 
 loadBest();
-updateHud();
+newGame();
 resize();
 requestAnimationFrame(frame);
 </script>
