@@ -3,9 +3,9 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
-<title>ネオンピンボール</title>
+<title>香港ネオンピンボール</title>
 <style>
-  :root { --bg: #07060f; --panel: #120c24; --cyan: #00f0ff; --pink: #ff2a9d; --yellow: #fcee0a; --text: #e9e6ff; --muted: #9a93c9; }
+  :root { --bg: #14030a; --panel: #2c0713; --jade: #19ffb0; --pink: #ff1f6b; --yellow: #ffd21f; --text: #fff0dc; --muted: #d9a58e; }
   * { box-sizing: border-box; }
   html, body { height: 100%; margin: 0; }
   body {
@@ -16,21 +16,22 @@
   }
   #hud, #dmd, #controls, canvas { width: min(100%, calc((100dvh - 164px) * 4 / 7)); }
   #hud { display: flex; justify-content: space-between; font-variant-numeric: tabular-nums; }
-  #hud b { font-size: 18px; display: block; color: var(--cyan); }
+  #hud b { font-size: 18px; display: block; color: var(--jade); }
   #hud small { color: var(--muted); font-size: 11px; }
   #dmd {
     height: 34px; line-height: 32px; padding: 0 10px; overflow: hidden; white-space: nowrap; text-align: center;
-    background: var(--panel); border: 1px solid var(--pink); border-radius: 6px; color: var(--yellow);
-    font: bold 14px/32px ui-monospace, Consolas, "Yu Gothic UI", monospace; text-shadow: 0 0 8px rgba(252, 238, 10, .7);
+    background: var(--panel); border: 2px solid var(--pink); border-radius: 6px; color: var(--yellow);
+    box-shadow: 0 0 12px rgba(255, 31, 107, .7);
+    font: bold 14px/30px ui-monospace, Consolas, "Yu Gothic UI", monospace; text-shadow: 0 0 8px rgba(255, 210, 31, .8);
   }
-  canvas { aspect-ratio: 4 / 7; background: #0a0816; border-radius: 10px; touch-action: none; }
+  canvas { aspect-ratio: 4 / 7; background: #14030a; border-radius: 10px; touch-action: none; }
   #controls { display: flex; align-items: center; gap: 8px; }
   #help { flex: 1; margin: 0; font-size: 11px; line-height: 1.35; color: var(--muted); }
   button {
-    min-height: 36px; padding: 0 12px; border-radius: 6px; border: 1px solid var(--cyan);
-    background: var(--panel); color: var(--cyan); font: inherit; font-size: 13px; touch-action: manipulation;
+    min-height: 36px; padding: 0 12px; border-radius: 6px; border: 1px solid var(--jade);
+    background: var(--panel); color: var(--jade); font: inherit; font-size: 13px; touch-action: manipulation;
   }
-  button:active { background: var(--cyan); color: var(--bg); }
+  button:active { background: var(--jade); color: var(--bg); }
 </style>
 </head>
 <body>
@@ -54,7 +55,8 @@ const GRAVITY = 520, MAX_SPEED = 1300;
 const BALL_R = 9, FLIPPER_R = 6, FLIPPER_LEN = 58, FLIPPER_SPEED = 22;
 const LANE_X = 372.5, LANE_Y = 650, LAUNCH_MIN = 350, LAUNCH_MAX = 1100, AUTO_LAUNCH = 1000;
 const SAVE_TIME = 10, MULTI_SAVE_TIME = 12, LOCKS_NEEDED = 2, MAX_MULT = 5;
-const CYAN = '#00f0ff', PINK = '#ff2a9d', YELLOW = '#fcee0a', VIOLET = '#7c4dff', DIM = '#2c2650', WHITE = '#f4f2ff';
+const OUTLANE_L = 33, OUTLANE_R = 332;
+const JADE = '#19ffb0', PINK = '#ff1f6b', YELLOW = '#ffd21f', ORANGE = '#ff7a18', DIM = '#4a1626', WHITE = '#fff4e6';
 
 function arc(cx, cy, r, from, to, parts) {
   const segments = [];
@@ -71,26 +73,36 @@ const walls = [
   [355, 660, 390, 660], [355, 130, 355, 660],
   [52, 365, 52, 130],                   // inner wall of the loop
   [10, 400, 40, 432],                   // deflects a failed loop away from the outlane
-  [48, 490, 48, 556], [48, 556, 112, 610],
-  [317, 490, 317, 556], [317, 556, 253, 610],
+  [355, 400, 325, 432],                 // same guard on the right
+  [OUTLANE_L, 470, OUTLANE_L, 548], [OUTLANE_L, 548, 112, 610],
+  [OUTLANE_R, 470, OUTLANE_R, 548], [OUTLANE_R, 548, 253, 610],
 ];
 const slings = [
-  { a: [80, 455], b: [80, 545], c: [132, 570], nx: 0.91, ny: -0.41, flash: 0 },
-  { a: [285, 455], b: [285, 545], c: [233, 570], nx: -0.91, ny: -0.41, flash: 0 },
+  { a: [80, 455], b: [80, 540], c: [137, 562], nx: 0.88, ny: -0.47, flash: 0 },
+  { a: [285, 455], b: [285, 540], c: [228, 562], nx: -0.88, ny: -0.47, flash: 0 },
 ];
 const shooterGate = [355, 130, 390, 100];
 const loopGate = [12, 100, 52, 130];
 const hole = { x: 92, y: 340, r: 14 };
 const bumpers = [
-  { x: 134, y: 215, r: 24, flash: 0 },
-  { x: 231, y: 215, r: 24, flash: 0 },
-  { x: 182, y: 295, r: 24, flash: 0 },
+  { x: 134, y: 215, r: 24, flash: 0, label: '福' },
+  { x: 231, y: 215, r: 24, flash: 0, label: '財' },
+  { x: 182, y: 295, r: 24, flash: 0, label: '龍' },
 ];
 const stars = [
-  { x: 120, y: 110, lit: false },
-  { x: 182, y: 88, lit: false },
-  { x: 245, y: 110, lit: false },
+  { x: 120, y: 110, lit: false, label: '香' },
+  { x: 182, y: 88, lit: false, label: '港' },
+  { x: 245, y: 110, lit: false, label: '夜' },
 ];
+const signs = [
+  { x: 118, y: 350, w: 30, h: 96, text: '酒家', color: 'PINK_SIGN' },
+  { x: 156, y: 372, w: 26, h: 104, text: '茶餐廳', color: 'JADE_SIGN' },
+  { x: 190, y: 356, w: 30, h: 96, text: '大吉', color: 'GOLD_SIGN' },
+  { x: 228, y: 372, w: 26, h: 104, text: '夜市', color: 'PINK_SIGN' },
+  { x: 262, y: 346, w: 40, h: 40, text: '押', color: 'ORANGE_SIGN' },
+];
+const bulbs = [...arc(90, 90, 66, Math.PI, Math.PI * 1.5, 8), ...arc(300, 100, 76, -Math.PI / 2, 0, 8)].map(s => [s[0], s[1]]);
+for (let x = 104; x <= 292; x += 14) bulbs.push([x, 24]);
 const drops = [
   { x: 345, y1: 250, y2: 285, down: false },
   { x: 345, y1: 292, y2: 327, down: false },
@@ -440,7 +452,7 @@ function hitSlings(ball) {
       s.flash = 0.1;
       addScore(50);
       progress('sling');
-      burst(ball.x, ball.y, CYAN, 5);
+      burst(ball.x, ball.y, JADE, 5);
       sfx.sling();
     }
   }
@@ -453,7 +465,7 @@ function hitDrops(ball) {
     game.stats.drop += 1;
     addScore(300);
     progress('drop');
-    burst(d.x, ball.y, CYAN);
+    burst(d.x, ball.y, JADE);
     sfx.drop();
   }
   if (game.dropT === 0 && drops.every(d => d.down)) {
@@ -565,6 +577,7 @@ function stepBall(b) {
   // Walls run after flippers so a raised flipper cannot squeeze the ball through a slope.
   for (const w of walls) collide(b, w[0], w[1], w[2], w[3], BALL_R, 0.45);
   if (b.inLane && b.x < 345) b.inLane = false;
+  if (b.x > 358 && b.y > 140) b.inLane = true; // a ball that dropped back in can be re-served
   if (!b.inLane) collide(b, ...shooterGate, BALL_R, 0.45);
   if (b.vy > 0) collide(b, ...loopGate, BALL_R, 0.45);
   hitSlings(b);
@@ -575,14 +588,14 @@ function stepBall(b) {
   hitHole(b);
   if (b.dead || b.hold > 0) return;
 
-  if (b.y > 630 && (b.x < 48 || b.x > 317)) {
-    const side = b.x < 48 ? 'left' : 'right';
+  if (b.y > 630 && (b.x < OUTLANE_L || b.x > OUTLANE_R)) {
+    const side = b.x < OUTLANE_L ? 'left' : 'right';
     if (kickers[side]) {
       kickers[side] = false;
       b.vy = -820;
-      b.vx = side === 'left' ? 0 : -40;
+      b.vx = side === 'left' ? 40 : -120;
       say('KICKBACK 復帰！');
-      burst(b.x, b.y, CYAN, 12);
+      burst(b.x, b.y, JADE, 12);
       sfx.save();
     }
   }
@@ -710,43 +723,84 @@ function triangle(c, s, color, alpha) {
 // Everything that never moves is drawn once here, which keeps phones smooth.
 function drawTable(c) {
   const sky = c.createLinearGradient(0, 0, 0, H);
-  sky.addColorStop(0, '#160a2e');
-  sky.addColorStop(0.6, '#0b0a1c');
-  sky.addColorStop(1, '#14061f');
+  sky.addColorStop(0, '#3a0620');
+  sky.addColorStop(0.5, '#1c0412');
+  sky.addColorStop(1, '#3a0a0a');
   c.fillStyle = sky;
   c.fillRect(0, 0, W, H);
 
-  c.globalAlpha = 0.5;
-  c.fillStyle = '#1a1338';
+  // Packed tenement blocks with lit windows.
   let x = 56;
-  for (const [w, h] of [[34, 70], [26, 110], [40, 55], [24, 130], [36, 85], [30, 120], [38, 60], [28, 95]]) {
+  for (const [w, h] of [[34, 150], [26, 220], [40, 120], [24, 260], [36, 170], [30, 240], [38, 130], [28, 200]]) {
+    c.fillStyle = '#240916';
     c.fillRect(x, 470 - h, w, h);
-    x += w + 4;
+    for (let wy = 478 - h; wy < 462; wy += 12) {
+      for (let wx = x + 4; wx < x + w - 5; wx += 8) {
+        if ((wx * 7 + wy * 13) % 5 < 2) {
+          c.fillStyle = (wx + wy) % 3 ? '#7a3b1c' : '#2f6b63';
+          c.fillRect(wx, wy, 4, 6);
+        }
+      }
+    }
+    x += w + 2;
   }
-  c.globalAlpha = 0.14;
-  for (let i = 0; i <= H; i += 30) line(c, 0, i, W, i, VIOLET, 1);
-  for (let i = 0; i <= W; i += 30) line(c, i, 0, i, H, VIOLET, 1);
-  c.globalAlpha = 1;
 
-  c.font = 'bold 42px ui-monospace, Consolas, monospace';
   c.textAlign = 'center';
-  c.globalAlpha = 0.16;
-  c.fillStyle = PINK;
-  c.fillText('ネオン', 182, 420);
+  c.textBaseline = 'middle';
+  c.font = '900 56px "Noto Sans CJK TC", "Microsoft JhengHei", "Yu Gothic UI", sans-serif';
+  c.globalAlpha = 0.5;
+  neonText(c, '霓虹', 182, 165, PINK, 12);
   c.globalAlpha = 1;
-  c.font = '9px ui-monospace, Consolas, monospace';
-  c.fillStyle = VIOLET;
-  c.fillText('LOOP', 31, 250);
-  c.fillText('FIREWALL', 298, 240);
+  for (const s of signs) drawSign(c, s);
+  c.font = 'bold 9px ui-monospace, Consolas, monospace';
+  neonText(c, 'LOOP', 31, 250, YELLOW, 4);
+  neonText(c, '大吉利', 318, 240, JADE, 4);
 
-  for (const w of walls) line(c, w[0], w[1], w[2], w[3], VIOLET, 4, 8);
-  line(c, ...loopGate, CYAN, 2, 6);
+  walls.forEach(w => tube(c, w[0], w[1], w[2], w[3], wallColor(w), 4));
+  tube(c, ...loopGate, JADE, 2);
   for (const s of slings) {
-    line(c, s.a[0], s.a[1], s.b[0], s.b[1], VIOLET, 4, 6);
-    line(c, s.b[0], s.b[1], s.c[0], s.c[1], VIOLET, 4, 6);
+    tube(c, s.a[0], s.a[1], s.b[0], s.b[1], ORANGE, 4);
+    tube(c, s.b[0], s.b[1], s.c[0], s.c[1], ORANGE, 4);
   }
-  circle(c, hole.x, hole.y, hole.r + 3, DIM);
-  circle(c, hole.x, hole.y, hole.r - 2, '#03020a');
+  circle(c, hole.x, hole.y, hole.r + 3, YELLOW, 8);
+  circle(c, hole.x, hole.y, hole.r - 2, '#0a0205');
+  c.textBaseline = 'alphabetic';
+}
+
+function wallColor(w) {
+  if ((w[1] + w[3]) / 2 < 140) return PINK;
+  return (w[0] + w[2]) / 2 < 182 ? YELLOW : JADE;
+}
+
+// A glowing colored tube with a hot core, like real neon glass.
+function tube(c, x1, y1, x2, y2, color, width) {
+  line(c, x1, y1, x2, y2, color, width, 14);
+  line(c, x1, y1, x2, y2, WHITE, width * 0.35);
+}
+
+function neonText(c, text, x, y, color, glow) {
+  c.shadowColor = color;
+  c.shadowBlur = glow;
+  c.fillStyle = color;
+  c.fillText(text, x, y);
+  c.shadowBlur = 0;
+}
+
+function drawSign(c, s) {
+  const color = { PINK_SIGN: PINK, JADE_SIGN: JADE, GOLD_SIGN: YELLOW, ORANGE_SIGN: ORANGE }[s.color];
+  c.fillStyle = 'rgba(40, 6, 16, 0.85)';
+  c.fillRect(s.x, s.y, s.w, s.h);
+  c.strokeStyle = color;
+  c.lineWidth = 2;
+  c.shadowColor = color;
+  c.shadowBlur = 8;
+  c.strokeRect(s.x, s.y, s.w, s.h);
+  c.shadowBlur = 0;
+  const size = s.w - 6;
+  c.font = `900 ${size}px "Noto Sans CJK TC", "Microsoft JhengHei", "Yu Gothic UI", sans-serif`;
+  const chars = [...s.text];
+  const gap = s.h / chars.length;
+  chars.forEach((ch, i) => neonText(c, ch, s.x + s.w / 2, s.y + gap * (i + 0.5), color, 8));
 }
 
 function pulse(speed = 6) {
@@ -763,18 +817,52 @@ function missionTargets() {
   }
 }
 
+function drawSignFlicker() {
+  const t = performance.now() / 1000;
+  signs.forEach((s, i) => {
+    if (Math.sin(t * (3 + i) + i * 2) * Math.sin(t * 7.3 + i) > 0.75) {
+      ctx.fillStyle = 'rgba(20, 3, 10, 0.65)';
+      ctx.fillRect(s.x, s.y, s.w, s.h);
+    }
+  });
+}
+
+function drawBulbs() {
+  const speed = game.multi ? 50 : 130;
+  const phase = Math.floor(performance.now() / speed);
+  const colors = [PINK, YELLOW, JADE];
+  bulbs.forEach(([x, y], i) => {
+    const lit = (i + phase) % 3 === 0;
+    ctx.fillStyle = lit ? colors[i % 3] : DIM;
+    ctx.beginPath();
+    ctx.arc(x, y, lit ? 3 : 2, 0, Math.PI * 2);
+    ctx.fill();
+  });
+}
+
+function drawLabel(text, x, y, color, size) {
+  ctx.fillStyle = color;
+  ctx.font = `900 ${size}px "Noto Sans CJK TC", "Microsoft JhengHei", "Yu Gothic UI", sans-serif`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(text, x, y);
+  ctx.textBaseline = 'alphabetic';
+}
+
 function drawLamps() {
+  drawSignFlicker();
+  drawBulbs();
   const on = pulse();
   ctx.globalAlpha = on;
   if (game.state === 'play' || game.state === 'ready') {
     for (const [x, y] of missionTargets()) circle(ctx, x, y, 4, YELLOW, 8);
   }
   ctx.globalAlpha = 1;
-  circle(ctx, 29, 600, 5, kickers.left ? CYAN : DIM, kickers.left ? 8 : 0);
-  circle(ctx, 336, 600, 5, kickers.right ? CYAN : DIM, kickers.right ? 8 : 0);
+  circle(ctx, 22, 600, 5, kickers.left ? JADE : DIM, kickers.left ? 8 : 0);
+  circle(ctx, 343, 600, 5, kickers.right ? JADE : DIM, kickers.right ? 8 : 0);
   if (game.saveT > 0 && !game.saveUsed || game.state === 'ready' && !game.saveUsed) {
     ctx.globalAlpha = on;
-    ctx.fillStyle = CYAN;
+    ctx.fillStyle = JADE;
     ctx.font = 'bold 12px ui-monospace, Consolas, monospace';
     ctx.textAlign = 'center';
     ctx.fillText('SHIELD', 182, 682);
@@ -784,7 +872,7 @@ function drawLamps() {
     ctx.globalAlpha = on;
     circle(ctx, hole.x, hole.y, hole.r + 7, PINK, 12);
     ctx.globalAlpha = 1;
-    circle(ctx, hole.x, hole.y, hole.r - 2, '#03020a');
+    circle(ctx, hole.x, hole.y, hole.r - 2, '#0a0205');
   }
   for (let i = 0; i < LOCKS_NEEDED; i++) {
     circle(ctx, hole.x - 8 + i * 16, hole.y + 28, 4, i < game.locked ? PINK : DIM);
@@ -798,19 +886,23 @@ function draw() {
   ctx.drawImage(table, (Math.random() - 0.5) * shake * 2, (Math.random() - 0.5) * shake * 2);
   ctx.setTransform(canvas.width / W, 0, 0, canvas.height / H, 0, 0);
 
-  if (balls.every(b => !b.inLane)) line(ctx, ...shooterGate, VIOLET, 4, 6);
+  if (balls.every(b => !b.inLane)) tube(ctx, ...shooterGate, JADE, 4);
   drawLamps();
-  for (const s of slings) triangle(ctx, s, s.flash > 0 ? YELLOW : CYAN, s.flash > 0 ? 0.9 : 0.25);
-  for (const d of drops) line(ctx, d.x, d.y1, d.x, d.y2, d.down ? DIM : CYAN, d.down ? 2 : 6, d.down ? 0 : 10);
-  for (const s of stars) circle(ctx, s.x, s.y, 8, s.lit ? YELLOW : DIM, s.lit ? 12 : 0);
+  for (const s of slings) triangle(ctx, s, s.flash > 0 ? YELLOW : JADE, s.flash > 0 ? 0.9 : 0.25);
+  for (const d of drops) line(ctx, d.x, d.y1, d.x, d.y2, d.down ? DIM : JADE, d.down ? 2 : 6, d.down ? 0 : 10);
+  for (const s of stars) {
+    circle(ctx, s.x, s.y, 10, s.lit ? YELLOW : DIM, s.lit ? 14 : 0);
+    drawLabel(s.label, s.x, s.y + 1, s.lit ? '#3a0620' : '#d9a58e', 13);
+  }
   for (const b of bumpers) {
-    circle(ctx, b.x, b.y, b.r, b.flash > 0 ? YELLOW : PINK, 14);
-    circle(ctx, b.x, b.y, b.r * 0.55, '#0a0816');
+    circle(ctx, b.x, b.y, b.r, b.flash > 0 ? WHITE : PINK, 16);
+    circle(ctx, b.x, b.y, b.r * 0.72, b.flash > 0 ? YELLOW : '#3a0620');
+    drawLabel(b.label, b.x, b.y + 1, b.flash > 0 ? '#3a0620' : YELLOW, 24);
   }
   for (const f of flippers) {
-    line(ctx, f.x, f.y, f.x + Math.cos(f.angle) * FLIPPER_LEN, f.y + Math.sin(f.angle) * FLIPPER_LEN, game.tiltLock > 0 ? DIM : CYAN, FLIPPER_R * 2, 8);
+    line(ctx, f.x, f.y, f.x + Math.cos(f.angle) * FLIPPER_LEN, f.y + Math.sin(f.angle) * FLIPPER_LEN, game.tiltLock > 0 ? DIM : JADE, FLIPPER_R * 2, 8);
   }
-  if (game.state === 'ready') line(ctx, LANE_X, 690, LANE_X, 672 + game.charge * 16, game.charge > 0.8 ? PINK : CYAN, 8, 8);
+  if (game.state === 'ready') line(ctx, LANE_X, 690, LANE_X, 672 + game.charge * 16, game.charge > 0.8 ? PINK : JADE, 8, 8);
 
   for (const s of sparks) {
     ctx.globalAlpha = s.life / 0.35;
@@ -825,7 +917,7 @@ function draw() {
     if (b.trail.length > 12) b.trail.splice(0, 2);
     for (let i = 0; i < b.trail.length; i += 2) {
       ctx.globalAlpha = i / 40;
-      circle(ctx, b.trail[i], b.trail[i + 1], BALL_R - 1, CYAN);
+      circle(ctx, b.trail[i], b.trail[i + 1], BALL_R - 1, JADE);
     }
     ctx.globalAlpha = 1;
     circle(ctx, b.x, b.y, BALL_R, WHITE, 10);
@@ -833,12 +925,14 @@ function draw() {
 
   ctx.textAlign = 'center';
   if (game.state === 'ready' && !game.charging) {
+    ctx.fillStyle = 'rgba(20, 3, 10, 0.8)';
+    ctx.fillRect(112, 384, 141, 26);
     ctx.fillStyle = WHITE;
     ctx.font = '16px system-ui, sans-serif';
-    ctx.fillText('長押しで発射', 182, 400);
+    ctx.fillText('長押しで発射', 182, 403);
   }
   if (game.state === 'over') {
-    ctx.fillStyle = 'rgba(7, 6, 15, 0.7)';
+    ctx.fillStyle = 'rgba(20, 3, 10, 0.85)';
     ctx.fillRect(40, 340, 285, 100);
     ctx.fillStyle = PINK;
     ctx.font = 'bold 30px system-ui, sans-serif';
